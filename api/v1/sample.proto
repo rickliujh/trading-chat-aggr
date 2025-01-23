@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rickliujh/kickstart-gogrpc/pkg/api/v1";
+
+// Service provides APIs for client applications to interact with the server.
+// It includes methods for basic functionality and streaming data.
+service Service {
+  // Scalar checks the connectivity and response time of the service.
+  rpc Scalar(ScalarRequest) returns (ScalarResponse);
+
+  // Stream continuously sends and receives response messages.
+  // It is useful for scenarios where constant data flow is required.
+  rpc Stream(stream StreamRequest) returns (stream StreamResponse);
+}
+
+// Content represents the message content with metadata.
+message Content {
+  // Unique identifier for the message.
+  string id = 1;
+
+  // Actual content of the message in binary format.
+  google.protobuf.Any data = 2;
+
+  // Additional information about the message in key-value pairs.
+  map<string, string> metadata = 3;
+}
+
+// ScalarRequest represents the request for a method invocation.
+// It includes the content to be sent and a timestamp.
+message ScalarRequest {
+  // The content to be sent in the request.
+  Content content = 1;
+
+  // Timestamp when the message was sent, represented in Unix epoch format.
+  google.protobuf.Timestamp sent = 2;
+}
+
+// ScalarResponse represents the server's response to a request.
+// It includes details like request ID and processing information.
+message ScalarResponse {
+  // Enum to represent the result types of the operation.
+  enum ResultType {
+    RESULT_TYPE_UNSPECIFIED = 0; // Default value, unspecified result type.
+    RESULT_TYPE_SUCCESS = 1;     // Indicates successful processing.
+    RESULT_TYPE_ERROR = 2;       // Indicates an error occurred.
+  }
+
+  // Unique identifier correlating to the request.
+  string request_id = 1;
+
+  // Total number of messages received in the request.
+  int64 message_count = 2;
+
+  // Number of messages successfully processed.
+  int64 messages_processed = 3;
+
+  // Detailed information or description of the processing result.
+  string processing_details = 4;
+}
+
+message StreamRequest{
+  Content content = 1;
+
+  google.protobuf.Timestamp sent = 2;
+}
+
+message StreamResponse{
+  enum ResultType {
+    RESULT_TYPE_UNSPECIFIED = 0; 
+    RESULT_TYPE_SUCCESS = 1;
+    RESULT_TYPE_ERROR = 2; 
+  }
+
+  string request_id = 1;
+
+  int64 message_count = 2;
+
+  int64 messages_processed = 3;
+
+  string processing_details = 4;
+}
