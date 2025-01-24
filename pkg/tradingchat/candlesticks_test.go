@@ -9,8 +9,7 @@ import (
 )
 
 func TestOHLCCalc(t *testing.T) {
-	logger := testr.New(t)
-	logger.Info("start")
+	logger := testr.NewWithOptions(t, testr.Options{Verbosity: 4})
 
 	t.Run("update should work correctly", func(t *testing.T) {
 		// test time from 16:05 to 16:06 on Jan 24th 2025
@@ -57,7 +56,7 @@ func TestOHLCCalc(t *testing.T) {
 		var beforeSpecialEvent int64 = inittime + 59
 		var afterSepcialEvent int64 = beforeSpecialEvent + 60
 
-		calc := NewOHLCCalc()
+		calc := NewOHLCCalc(logger)
 		assert.Equal(t,
 			&OHLCCalc{
 				OHLCBar{
@@ -68,6 +67,7 @@ func TestOHLCCalc(t *testing.T) {
 					T: 0,
 				},
 				0,
+				logger,
 			},
 			calc,
 		)
@@ -85,6 +85,7 @@ func TestOHLCCalc(t *testing.T) {
 					T: 1737734759,
 				},
 				beforeSpecialEvent,
+				logger,
 			},
 			calc,
 		)
@@ -100,13 +101,14 @@ func TestOHLCCalc(t *testing.T) {
 					T: specialEvent.TradeTime,
 				},
 				afterSepcialEvent,
+				logger,
 			},
 			calc,
 		)
 	})
 
-	t.Run("item should be a copy of it", func(t *testing.T) {
-		calc := NewOHLCCalc()
+	t.Run("bar should be a copy of it", func(t *testing.T) {
+		calc := NewOHLCCalc(logger)
 		oldItem := calc.Item()
 		expectedItem := OHLCBar{
 			H: "0",

@@ -15,11 +15,11 @@ var (
 
 type Aggr map[string]*OHLCCalc
 
-func NewAggrStream(logger *logr.Logger, done <-chan struct{}, eventStream <-chan *bconn.WsAggTradeEvent, symbols []string) (Aggr, <-chan string) {
+func NewAggrStream(logger logr.Logger, done <-chan struct{}, eventStream <-chan *bconn.WsAggTradeEvent, symbols []string) (Aggr, <-chan string) {
 	dict := Aggr{}
 	updateCh := make(chan string, 500)
 	for _, symbol := range symbols {
-		dict[symbol] = NewOHLCCalc()
+		dict[symbol] = NewOHLCCalc(logger.WithName(symbol))
 	}
 
 	go func() {

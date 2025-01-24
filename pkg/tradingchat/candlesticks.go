@@ -4,7 +4,7 @@ import (
 	"time"
 
 	bconn "github.com/binance/binance-connector-go"
-	"github.com/rickliujh/trading-chat-aggr/pkg/utils"
+	"github.com/go-logr/logr"
 )
 
 const (
@@ -20,11 +20,12 @@ type OHLCBar struct {
 }
 
 type OHLCCalc struct {
-	bar    OHLCBar
+	bar     OHLCBar
 	endedAt int64
+	logger  logr.Logger
 }
 
-func NewOHLCCalc() *OHLCCalc {
+func NewOHLCCalc(logger logr.Logger) *OHLCCalc {
 	return &OHLCCalc{
 		bar: OHLCBar{
 			H: "0",
@@ -33,16 +34,16 @@ func NewOHLCCalc() *OHLCCalc {
 			C: "0",
 			T: 0,
 		},
+		logger:  logger,
 		endedAt: 0,
 	}
 }
 
 func (c *OHLCCalc) update(event *bconn.WsAggTradeEvent) {
-	logger := utils.NewLogger(0)
-	logger.Info("Update", event)
 	price := event.Price
 	ts := event.TradeTime
 
+	c.logger.V(4).Info("OHLCCalc before update", "OHLCCalc", c, "event", event)
 	if c.endedAt >= ts {
 		if c.bar.H < price {
 			c.bar.H = price
@@ -62,11 +63,13 @@ func (c *OHLCCalc) update(event *bconn.WsAggTradeEvent) {
 		c.bar.T = ts
 		c.tick(ts)
 	}
-	logger.Info("After", c.endedAt, c.bar)
+	c.logger.V(4).Info("OHLCCalc updated", "OHLCCalc", c, "event", event)
 }
 
 func (c *OHLCCalc) tick(newTick int64) {
-	c.endedAt = time.Unix(newTick, 0).Truncate(time.Minute).Add(59 * time.Second).Unix()
+	newEndedAt := time.Unix(newTick, 0).Truncate(time.Minute).Add(59 * time.Second).Unix()
+	c.endedAt = newEndedAt
+	c.logger.V(4).Info("tick updated", "newtick", newTick, "old-endedAt", c.endedAt, "new_endedAt", newEndedAt)
 }
 
 func (c *OHLCCalc) Item() OHLCBar {

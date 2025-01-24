@@ -9,8 +9,7 @@ import (
 )
 
 func TestAggr(t *testing.T) {
-	logger := testr.New(t)
-	logger.Info("start")
+	logger := testr.NewWithOptions(t, testr.Options{Verbosity: 4})
 
 	t.Run("events update should be notified to downstream", func(t *testing.T) {
 		events := []*bconn.WsAggTradeEvent{
@@ -33,7 +32,7 @@ func TestAggr(t *testing.T) {
 		done := make(chan struct{})
 		stream := make(chan *bconn.WsAggTradeEvent)
 		defer close(stream)
-		ag, updateCh := NewAggrStream(&logger, done, stream, symbols)
+		ag, updateCh := NewAggrStream(logger, done, stream, symbols)
 
 		go func() {
 			for _, e := range events {
