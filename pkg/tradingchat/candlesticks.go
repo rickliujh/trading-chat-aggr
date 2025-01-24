@@ -11,7 +11,7 @@ const (
 	Interval1M = time.Second * 60
 )
 
-type OHLCItem struct {
+type OHLCBar struct {
 	H string `json:"high"`
 	L string `json:"low"`
 	O string `json:"open"`
@@ -20,59 +20,55 @@ type OHLCItem struct {
 }
 
 type OHLCCalc struct {
-	item    OHLCItem
+	bar    OHLCBar
 	endedAt int64
 }
 
-// inittime should be 1 second before the beginning of the minute of
-// the trade time of first event that updates it
-func NewOHLCCalc(inittime int64) *OHLCCalc {
+func NewOHLCCalc() *OHLCCalc {
 	return &OHLCCalc{
-		item: OHLCItem{
+		bar: OHLCBar{
 			H: "0",
 			L: "0",
 			O: "0",
 			C: "0",
 			T: 0,
 		},
-		endedAt: inittime,
+		endedAt: 0,
 	}
 }
 
-func (c *OHLCCalc) Update(event *bconn.WsAggTradeEvent) {
+func (c *OHLCCalc) update(event *bconn.WsAggTradeEvent) {
 	logger := utils.NewLogger(0)
 	logger.Info("Update", event)
 	price := event.Price
 	ts := event.TradeTime
 
 	if c.endedAt >= ts {
-		if c.item.H < price {
-			c.item.H = price
+		if c.bar.H < price {
+			c.bar.H = price
 		}
-		if c.item.L > price {
-			c.item.L = price
+		if c.bar.L > price {
+			c.bar.L = price
 		}
-		if c.item.T < ts {
-			c.item.C = price
-			c.item.T = ts
+		if c.bar.T < ts {
+			c.bar.C = price
+			c.bar.T = ts
 		}
 	} else {
-		c.item.H = price
-		c.item.L = price
-		c.item.O = price
-		c.item.C = price
-		c.item.T = ts
-		c.endedAt = calcEndedTime(c.endedAt, Interval1M)
+		c.bar.H = price
+		c.bar.L = price
+		c.bar.O = price
+		c.bar.C = price
+		c.bar.T = ts
+		c.tick(ts)
 	}
-	logger.Info("After", c.endedAt, c.item)
+	logger.Info("After", c.endedAt, c.bar)
 }
 
-func calcEndedTime(last int64, duration time.Duration) int64 {
-	logger := utils.NewLogger(0)
-	logger.Info("cacalcEndedTime", last, duration)
-	return time.Unix(last, 0).Add(duration).Unix()
+func (c *OHLCCalc) tick(newTick int64) {
+	c.endedAt = time.Unix(newTick, 0).Truncate(time.Minute).Add(59 * time.Second).Unix()
 }
 
-func (c *OHLCCalc) Item() OHLCItem {
-	return c.item
+func (c *OHLCCalc) Item() OHLCBar {
+	return c.bar
 }

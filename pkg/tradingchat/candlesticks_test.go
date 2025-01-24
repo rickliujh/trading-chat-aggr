@@ -53,53 +53,62 @@ func TestOHLCCalc(t *testing.T) {
 			TradeTime: 1737734760,
 		}
 
-		var inittime int64 = 1737734700 - 1
-		calc := NewOHLCCalc(inittime)
+		var inittime int64 = 1737734700
+		var beforeSpecialEvent int64 = inittime + 59
+		var afterSepcialEvent int64 = beforeSpecialEvent + 60
+
+		calc := NewOHLCCalc()
 		assert.Equal(t,
 			&OHLCCalc{
-				OHLCItem{
+				OHLCBar{
 					H: "0",
 					L: "0",
 					O: "0",
 					C: "0",
 					T: 0,
 				},
-				inittime,
+				0,
 			},
 			calc,
 		)
 
 		for _, v := range events {
-			calc.Update(v)
+			calc.update(v)
 		}
 		assert.Equal(t,
 			&OHLCCalc{
-				OHLCItem{
+				OHLCBar{
 					H: "0.11134",
 					L: "0.11104",
 					O: "0.11111",
 					C: "0.11104",
 					T: 1737734759,
 				},
-				inittime + 60,
+				beforeSpecialEvent,
 			},
 			calc,
 		)
 
-		calc.Update(specialEvent)
-		assert.Equal(t, OHLCItem{
-			H: specialEvent.Price,
-			L: specialEvent.Price,
-			O: specialEvent.Price,
-			C: specialEvent.Price,
-			T: specialEvent.TradeTime,
-		}, calc.Item())
+		calc.update(specialEvent)
+		assert.Equal(t,
+			&OHLCCalc{
+				OHLCBar{
+					H: specialEvent.Price,
+					L: specialEvent.Price,
+					O: specialEvent.Price,
+					C: specialEvent.Price,
+					T: specialEvent.TradeTime,
+				},
+				afterSepcialEvent,
+			},
+			calc,
+		)
 	})
 
 	t.Run("item should be a copy of it", func(t *testing.T) {
-		calc := NewOHLCCalc(0)
+		calc := NewOHLCCalc()
 		oldItem := calc.Item()
-		expectedItem := OHLCItem{
+		expectedItem := OHLCBar{
 			H: "0",
 			L: "0",
 			O: "0",
@@ -113,7 +122,7 @@ func TestOHLCCalc(t *testing.T) {
 			Price:     "0.11101",
 			TradeTime: 1737734760,
 		}
-		calc.Update(specialEvent)
+		calc.update(specialEvent)
 
 		assert.Equal(t, expectedItem, oldItem, "oldItem should not change after update of item")
 
