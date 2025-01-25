@@ -27,7 +27,7 @@ It also supports linting
 make pblint
 ```
 
-### db
+### DB
 
 #### Migration
 
@@ -75,7 +75,9 @@ More commands can be found by
 ```
 make help
 ```
-## Design In order to maximize performance, server use goroutine for paralleling tasks. So call pipeline fan out to handle IO-Intensive operations, while using single-thread to handle trading data aggregation.
+## Design 
+
+In order to maximize performance, server use goroutine for paralleling tasks. So call pipeline fan out to handle IO-Intensive operations, while using single-thread to handle trading data aggregation.
 
 ![data flow overview](./docs/static/data-flow.png)
 
