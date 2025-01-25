@@ -52,6 +52,8 @@ func NewService(logger logr.Logger, db *sql.Queries, done <-chan struct{}) (*Ser
 	updateStrm1 := make(chan string, 500)
 	updateStrm2 := make(chan string, 500)
 	go func() {
+		defer close(updateStrm1)
+		defer close(updateStrm2)
 		for v := range tradingchat.OrDone(done, updateCh) {
 			updateStrm1 <- v
 			updateStrm2 <- v
