@@ -6,10 +6,10 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/api/v1/apiv1connect"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/server"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/sql"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/utils"
+	"github.com/rickliujh/trading-chat-aggr/pkg/api/v1/apiv1connect"
+	"github.com/rickliujh/trading-chat-aggr/pkg/server"
+	"github.com/rickliujh/trading-chat-aggr/pkg/sql"
+	"github.com/rickliujh/trading-chat-aggr/pkg/utils"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -31,7 +31,7 @@ func main() {
 	flag.StringVar(&dburi, "dburi", dburi, "Server pgxdb uri(default: localhost)")
 	flag.Parse()
 
-	logger := utils.NewLogger(0)
+	logger := utils.NewLogger(4)
 
 	// create server
 	logger.Info("creating server...")
@@ -44,25 +44,31 @@ func main() {
 	defer conn.Close(ctx)
 	queries := sql.New(conn)
 
-	s, err := server.NewServer(name, version, environment, queries)
+	done := make(chan struct{})
+
+	s, err := server.NewService(*logger, queries, done)
 	if err != nil {
 		logger.Error(err, "error while creating server")
 		return
 	}
 
 	mux := http.NewServeMux()
-	path, handler := apiv1connect.NewServiceHandler(s)
+	path, handler := apiv1connect.NewAggrHandler(s)
 	mux.Handle(path, handler)
 
 	// run server
-	logger.Info("starting server...", "server_name", s.String())
-	if err := http.ListenAndServe(
-		address,
-		h2c.NewHandler(mux, &http2.Server{}),
-	); err != nil {
+	logger.Info("starting server...")
+	server := http.Server{
+		Addr:    address,
+		Handler: h2c.NewHandler(mux, &http2.Server{}),
+	}
+
+	server.RegisterOnShutdown(func() {
+		close(done)
+	})
+
+	if err := server.ListenAndServe(); err != nil {
 		logger.Error(err, "error while running server")
 		return
 	}
-
-	logger.Info("done")
 }

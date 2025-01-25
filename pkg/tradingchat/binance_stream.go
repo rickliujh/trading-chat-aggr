@@ -9,8 +9,7 @@ const (
 	BinanceStreamURL = "wss://stream.binance.com:443"
 )
 
-
-func BinanceStreamEventGen(logger *logr.Logger, symbols []string, errHandler func(error), done <-chan struct{}) (chan struct{}, <-chan *bconn.WsAggTradeEvent, error) {
+func BinanceStreamEventGen(logger logr.Logger, symbols []string, errHandler func(error), done <-chan struct{}) (<-chan *bconn.WsAggTradeEvent, error) {
 	c := bconn.NewWebsocketStreamClient(true, BinanceStreamURL)
 	eventCh := make(chan *bconn.WsAggTradeEvent)
 
@@ -28,7 +27,7 @@ func BinanceStreamEventGen(logger *logr.Logger, symbols []string, errHandler fun
 
 	if err != nil {
 		logger.V(2).Error(err, "starting driver failed")
-		return nil, nil, err
+		return nil, err
 	}
 
 	stop := func() { stopCh <- struct{}{} }
@@ -46,5 +45,5 @@ func BinanceStreamEventGen(logger *logr.Logger, symbols []string, errHandler fun
 		}
 	}()
 
-	return doneCh, eventCh, nil
+	return eventCh, nil
 }

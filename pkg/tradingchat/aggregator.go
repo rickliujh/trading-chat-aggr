@@ -24,7 +24,7 @@ func NewAggrStream(logger logr.Logger, done <-chan struct{}, eventStream <-chan 
 
 	go func() {
 		defer close(updateCh)
-		for e := range orDone(done, eventStream) {
+		for e := range OrDone(done, eventStream) {
 			logger.V(4).Info("aggregator received new event", "event", e)
 
 			calc, ok := dict[e.Symbol]
@@ -41,7 +41,7 @@ func NewAggrStream(logger logr.Logger, done <-chan struct{}, eventStream <-chan 
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for tick := range orDone(done, ticker.C) {
+		for tick := range OrDone(done, ticker.C) {
 			for _, calc := range dict {
 				calc.tick(tick.Unix())
 			}
@@ -56,10 +56,10 @@ func (ag Aggr) OHLCBar(symbol string) (OHLCBar, error) {
 	if !ok {
 		return OHLCBar{}, ErrNotSymbolRegistered
 	}
-	return calc.Item(), nil
+	return calc.Bar(), nil
 }
 
-func orDone[T any](done <-chan struct{}, stream <-chan T) <-chan T {
+func OrDone[T any](done <-chan struct{}, stream <-chan T) <-chan T {
 	relayStream := make(chan T)
 	go func() {
 		defer close(relayStream)

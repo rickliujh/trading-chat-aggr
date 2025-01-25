@@ -3,7 +3,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/rickliujh/kickstart-gogrpc/pkg
+      value: github.com/rickliujh/trading-chat-aggr/pkg
 plugins:
   - remote: buf.build/protocolbuffers/go
     out: pkg

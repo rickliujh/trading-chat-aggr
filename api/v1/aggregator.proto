@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package svc.api.v1;
+
+option go_package = "github.com/rickliujh/trading-chat-aggr/pkg/api/v1";
+
+import "google/protobuf/timestamp.proto";
+
+service Aggr {
+  rpc Candlesticks1MStream(stream Candlesticks1MStreamRequest) returns (stream Candlesticks1MStreamResponse);
+}
+
+
+message Candlesticks1MStreamRequest{
+  string request_id = 1;
+  repeated string symbols = 2;
+}
+
+message Candlesticks1MStreamResponse{
+  message Bar {
+      string High = 1;
+      string Low = 2;
+      string Open = 3;
+      string Close = 4;
+      google.protobuf.Timestamp UpdatedAt = 5;
+  }
+  Bar update = 1;
+}

@@ -72,6 +72,6 @@ func (c *OHLCCalc) tick(newTick int64) {
 	c.logger.V(4).Info("tick updated", "newtick", newTick, "old-endedAt", c.endedAt, "new_endedAt", newEndedAt)
 }
 
-func (c *OHLCCalc) Item() OHLCBar {
+func (c *OHLCCalc) Bar() OHLCBar {
 	return c.bar
 }

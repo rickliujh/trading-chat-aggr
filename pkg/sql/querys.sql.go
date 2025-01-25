@@ -11,64 +11,75 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createAuthor = `-- name: CreateAuthor :one
-INSERT INTO authors (
-  name, bio
+const createBar = `-- name: CreateBar :one
+INSERT INTO OHLC1M (
+  h, l, o, c, ts
 ) VALUES (
-  $1, $2
+  $1, $2, $3, $4, $5
 )
-RETURNING id, name, bio
+RETURNING id, h, l, o, c, ts
 `
 
-type CreateAuthorParams struct {
-	Name string
-	Bio  pgtype.Text
+type CreateBarParams struct {
+	H  pgtype.Numeric
+	L  pgtype.Numeric
+	O  pgtype.Numeric
+	C  pgtype.Numeric
+	Ts pgtype.Timestamp
 }
 
-func (q *Queries) CreateAuthor(ctx context.Context, arg CreateAuthorParams) (Author, error) {
-	row := q.db.QueryRow(ctx, createAuthor, arg.Name, arg.Bio)
-	var i Author
-	err := row.Scan(&i.ID, &i.Name, &i.Bio)
+func (q *Queries) CreateBar(ctx context.Context, arg CreateBarParams) (Ohlc1m, error) {
+	row := q.db.QueryRow(ctx, createBar,
+		arg.H,
+		arg.L,
+		arg.O,
+		arg.C,
+		arg.Ts,
+	)
+	var i Ohlc1m
+	err := row.Scan(
+		&i.ID,
+		&i.H,
+		&i.L,
+		&i.O,
+		&i.C,
+		&i.Ts,
+	)
 	return i, err
 }
 
-const deleteAuthor = `-- name: DeleteAuthor :exec
-DELETE FROM authors
+const deleteBar = `-- name: DeleteBar :exec
+DELETE FROM OHLC1M
 WHERE id = $1
 `
 
-func (q *Queries) DeleteAuthor(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deleteAuthor, id)
+func (q *Queries) DeleteBar(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteBar, id)
 	return err
 }
 
-const getAuthor = `-- name: GetAuthor :one
-SELECT id, name, bio FROM authors
-WHERE id = $1 LIMIT 1
+const listBars = `-- name: ListBars :many
+SELECT id, h, l, o, c, ts FROM OHLC1M 
+ORDER BY ts
 `
 
-func (q *Queries) GetAuthor(ctx context.Context, id int64) (Author, error) {
-	row := q.db.QueryRow(ctx, getAuthor, id)
-	var i Author
-	err := row.Scan(&i.ID, &i.Name, &i.Bio)
-	return i, err
-}
-
-const listAuthors = `-- name: ListAuthors :many
-SELECT id, name, bio FROM authors
-ORDER BY name
-`
-
-func (q *Queries) ListAuthors(ctx context.Context) ([]Author, error) {
-	rows, err := q.db.Query(ctx, listAuthors)
+func (q *Queries) ListBars(ctx context.Context) ([]Ohlc1m, error) {
+	rows, err := q.db.Query(ctx, listBars)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Author
+	var items []Ohlc1m
 	for rows.Next() {
-		var i Author
-		if err := rows.Scan(&i.ID, &i.Name, &i.Bio); err != nil {
+		var i Ohlc1m
+		if err := rows.Scan(
+			&i.ID,
+			&i.H,
+			&i.L,
+			&i.O,
+			&i.C,
+			&i.Ts,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -79,20 +90,30 @@ func (q *Queries) ListAuthors(ctx context.Context) ([]Author, error) {
 	return items, nil
 }
 
-const updateAuthor = `-- name: UpdateAuthor :exec
-UPDATE authors
-  set name = $2,
-  bio = $3
+const updateBar = `-- name: UpdateBar :exec
+UPDATE OHLC1M
+  set h = $2,
+ l = $3,
+ o = $4,
+ c = $5
 WHERE id = $1
 `
 
-type UpdateAuthorParams struct {
-	ID   int64
-	Name string
-	Bio  pgtype.Text
+type UpdateBarParams struct {
+	ID int64
+	H  pgtype.Numeric
+	L  pgtype.Numeric
+	O  pgtype.Numeric
+	C  pgtype.Numeric
 }
 
-func (q *Queries) UpdateAuthor(ctx context.Context, arg UpdateAuthorParams) error {
-	_, err := q.db.Exec(ctx, updateAuthor, arg.ID, arg.Name, arg.Bio)
+func (q *Queries) UpdateBar(ctx context.Context, arg UpdateBarParams) error {
+	_, err := q.db.Exec(ctx, updateBar,
+		arg.ID,
+		arg.H,
+		arg.L,
+		arg.O,
+		arg.C,
+	)
 	return err
 }

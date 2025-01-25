@@ -8,8 +8,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type Author struct {
-	ID   int64
-	Name string
-	Bio  pgtype.Text
+type Ohlc1m struct {
+	ID int64
+	H  pgtype.Numeric
+	L  pgtype.Numeric
+	O  pgtype.Numeric
+	C  pgtype.Numeric
+	Ts pgtype.Timestamp
 }

@@ -1,25 +1,23 @@
--- name: GetAuthor :one
-SELECT * FROM authors
-WHERE id = $1 LIMIT 1;
+-- name: ListBars :many
+SELECT * FROM OHLC1M 
+ORDER BY ts;
 
--- name: ListAuthors :many
-SELECT * FROM authors
-ORDER BY name;
-
--- name: CreateAuthor :one
-INSERT INTO authors (
-  name, bio
+-- name: CreateBar :one
+INSERT INTO OHLC1M (
+  h, l, o, c, ts
 ) VALUES (
-  $1, $2
+  $1, $2, $3, $4, $5
 )
 RETURNING *;
 
--- name: UpdateAuthor :exec
-UPDATE authors
-  set name = $2,
-  bio = $3
+-- name: UpdateBar :exec
+UPDATE OHLC1M
+  set h = $2,
+ l = $3,
+ o = $4,
+ c = $5
 WHERE id = $1;
 
--- name: DeleteAuthor :exec
-DELETE FROM authors
+-- name: DeleteBar :exec
+DELETE FROM OHLC1M
 WHERE id = $1;

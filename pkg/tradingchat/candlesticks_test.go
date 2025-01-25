@@ -109,7 +109,7 @@ func TestOHLCCalc(t *testing.T) {
 
 	t.Run("bar should be a copy of it", func(t *testing.T) {
 		calc := NewOHLCCalc(logger)
-		oldItem := calc.Item()
+		oldItem := calc.Bar()
 		expectedItem := OHLCBar{
 			H: "0",
 			L: "0",
@@ -128,7 +128,7 @@ func TestOHLCCalc(t *testing.T) {
 
 		assert.Equal(t, expectedItem, oldItem, "oldItem should not change after update of item")
 
-		newItem := calc.Item()
+		newItem := calc.Bar()
 		assert.NotEqual(t, &oldItem, &newItem)
 	})
 }

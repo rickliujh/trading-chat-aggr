@@ -2,176 +2,206 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"sync/atomic"
+	"errors"
+	"sync"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/go-logr/logr"
 	"github.com/jackc/pgx/v5/pgtype"
-	v1 "github.com/rickliujh/kickstart-gogrpc/pkg/api/v1"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/sql"
-	"github.com/rickliujh/kickstart-gogrpc/pkg/utils"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/pkg/errors"
+	apiv1 "github.com/rickliujh/trading-chat-aggr/pkg/api/v1"
+	"github.com/rickliujh/trading-chat-aggr/pkg/api/v1/apiv1connect"
+	"github.com/rickliujh/trading-chat-aggr/pkg/sql"
+	"github.com/rickliujh/trading-chat-aggr/pkg/tradingchat"
 )
 
-const (
-	protocol = "tcp" // network protocol
-	success  = "processed successfully"
-)
+var _ apiv1connect.AggrHandler = (*Service)(nil)
 
-func NewServer(name, version, environment string, db *sql.Queries) (*Server, error) {
-	if name == "" {
-		return nil, errors.New("name is required")
-	}
-	if version == "" {
-		return nil, errors.New("version is required")
-	}
-	if environment == "" {
-		return nil, errors.New("environment is required")
+func NewService(logger logr.Logger, db *sql.Queries, done <-chan struct{}) (*Service, error) {
+	symbols := []string{"ETHBTC"}
+	stream, err := tradingchat.BinanceStreamEventGen(
+		logger.WithName("binance-stream"),
+		symbols,
+		func(err error) {
+			logger.Error(err, "binance-stream error")
+		},
+		done,
+	)
+	if err != nil {
+		panic("can't connect to biance-stream")
 	}
 
-	return &Server{
-		counter:     atomic.Uint64{},
-		logger:      utils.NewLogger(4),
+	aggr, updateCh := tradingchat.NewAggrStream(logger.WithName("aggr"), done, stream, symbols)
+
+	regSymbols := make(map[string]*struct{}, len(symbols))
+	for _, s := range symbols {
+		regSymbols[s] = nil
+	}
+
+	s := &Service{
+		logger:      logger,
 		db:          db,
-		name:        name,
-		version:     version,
-		environment: environment,
-	}, nil
+		regSymbols:  regSymbols,
+		aggr:        aggr,
+		subscribers: map[string]*dispatcher{},
+		rw:          &sync.RWMutex{},
+	}
+
+	updateStrm1 := make(chan string, 500)
+	updateStrm2 := make(chan string, 500)
+	go func() {
+		for v := range tradingchat.OrDone(done, updateCh) {
+			updateStrm1 <- v
+			updateStrm2 <- v
+		}
+	}()
+	s.push(done, updateStrm1)
+	s.persist(done, updateStrm2)
+
+	return s, nil
 }
 
-// Server is used to implement your Service.
-type Server struct {
-	counter     atomic.Uint64 // counter for messages
-	logger      *logr.Logger
+type Service struct {
+	logger      logr.Logger
 	db          *sql.Queries
-	name        string // server name
-	version     string // server version
-	environment string // server environment
+	regSymbols  map[string]*struct{}
+	aggr        tradingchat.Aggr
+	subscribers map[string]*dispatcher
+	rw          *sync.RWMutex
 }
 
-func (s *Server) String() string {
-	return fmt.Sprintf("%s (%s) %s", s.name, s.environment, s.version)
-}
-
-func (s *Server) GetCounter() int64 {
-	return int64(s.counter.Load())
-}
-
-func (s *Server) GetName() string {
-	return s.name
-}
-
-func (s *Server) GetVersion() string {
-	return s.version
-}
-
-func (s *Server) GetEnvironment() string {
-	return s.environment
-}
-
-// Scalar implements the single method of the Service.
-func (s *Server) Scalar(ctx context.Context, req *connect.Request[v1.ScalarRequest]) (*connect.Response[v1.ScalarResponse], error) {
-	c := req.Msg.GetContent()
-
-	var jsonOjb map[string]interface{}
-	if err := unpackAnyToJSON(c.GetData(), &jsonOjb); err != nil {
-		s.logger.Error(err, "can't unmarshal from Content.data Any")
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-
-	s.logger.V(4).Info("received scalar", "data", jsonOjb)
-
-	s.counter.Add(1)
-	res := connect.NewResponse(&v1.ScalarResponse{
-		RequestId:         c.GetId(),
-		MessageCount:      s.GetCounter(),
-		MessagesProcessed: s.GetCounter(),
-		ProcessingDetails: success,
-	})
-
-	items, err := s.db.ListAuthors(ctx)
+// Candlesticks1MStream implements apiv1connect.AggrHandler.
+func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) error {
+	req, err := strm.Receive()
 	if err != nil {
-		s.logger.Error(err, "failed to list authors")
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		s.logger.Error(err, "can't read request")
+		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
-	s.logger.V(4).Info("list result", "authers", items)
 
-	return res, nil
-}
+	id := req.GetRequestId()
+	symbols := req.GetSymbols()
+	if !s.isSymbolRegistered(symbols) {
+		s.logger.V(1).Info("client request unregistered symbols", "symbols", symbols)
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("some of symbol are not supported"))
+	}
 
-// Stream implements the Stream method of the Service.
-func (s *Server) Stream(ctx context.Context, strm *connect.BidiStream[v1.StreamRequest, v1.StreamResponse]) error {
+	s.rw.Lock()
+	s.subscribers[id] = &dispatcher{
+		symbols: symbols,
+		strm:    strm,
+	}
+	s.rw.Unlock()
+
 	for {
-		in, err := strm.Receive()
-		if err != nil {
-			s.logger.Error(err, "failed to receive")
-			return connect.NewError(connect.CodeDataLoss, err)
-		}
-
-		c := in.GetContent()
-		s.logger.V(4).Info("received stream", "data", c.GetData())
-
-		s.counter.Add(1)
-		if err := strm.Send(&v1.StreamResponse{
-			RequestId:         in.Content.GetId(),
-			MessageCount:      s.GetCounter(),
-			MessagesProcessed: s.GetCounter(),
-			ProcessingDetails: success,
-		}); err != nil {
-			s.logger.Error(err, "failed to send")
-			return connect.NewError(connect.CodeUnavailable, err)
-		}
-
-		var jsonOjb map[string]string
-		if err := unpackAnyToJSON(c.GetData(), &jsonOjb); err != nil {
-			s.logger.Error(err, "can't unmarshal from Content.data Any")
-			return connect.NewError(connect.CodeInvalidArgument, err)
-		}
-
-		_, err = s.db.CreateAuthor(ctx, sql.CreateAuthorParams{
-			Name: jsonOjb["name"],
-			Bio:  pgtype.Text{String: jsonOjb["bio"], Valid: true},
-		})
-		if err != nil {
-			s.logger.Error(err, "unable to create author to db")
-		}
 	}
 }
 
-// packJSONIntoAny converts a JSON-serializable struct into an Any message
-func packJSONIntoAny(v interface{}) (*anypb.Any, error) {
-	// Convert the struct to JSON bytes
-	jsonBytes, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal to JSON: %w", err)
-	}
-
-	// Create Any message
-	anyMsg := &anypb.Any{
-		// Use a custom type URL for JSON content
-		TypeUrl: "type.googleapis.com/json",
-		// Store JSON bytes as the value
-		Value: jsonBytes,
-	}
-
-	return anyMsg, nil
+func (s *Service) push(done <-chan struct{}, stream <-chan string) {
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case symbol := <-stream:
+				s.logger.V(4).Info("new update to push", symbol)
+				s.rw.RLock()
+				for _, sub := range s.subscribers {
+					bar, err := s.aggr.OHLCBar(symbol)
+					if err != nil {
+						s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
+					}
+					sub.dispatch(symbol, &bar)
+				}
+				s.rw.RUnlock()
+			}
+		}
+	}()
 }
 
-// unpackAnyToJSON extracts JSON data from an Any message and unmarshals it into the target struct
-func unpackAnyToJSON(anyMsg *anypb.Any, target interface{}) error {
-	// Verify type URL (optional, but recommended)
-	if anyMsg.TypeUrl != "type.googleapis.com/json" {
-		return fmt.Errorf("unexpected type URL: %s", anyMsg.TypeUrl)
-	}
+func (s *Service) persist(done <-chan struct{}, stream <-chan string) {
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case symbol := <-stream:
+				s.logger.V(4).Info("new update to persist", symbol)
+				bar, err := s.aggr.OHLCBar(symbol)
+				if err != nil {
+					s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
+				}
+				ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
+				defer cancel()
 
-	// Unmarshal the value bytes into the target struct
-	if err := json.Unmarshal(anyMsg.Value, target); err != nil {
-		return fmt.Errorf("failed to unmarshal JSON from Any: %w", err)
-	}
+				var h pgtype.Numeric
+				if err := h.Scan(bar.H); err != nil {
+					s.logger.Error(err, "failed to convert to numeric from string", "numstr", bar.H)
+					continue
+				}
+				var l pgtype.Numeric
+				if err := l.Scan(bar.L); err != nil {
+					s.logger.Error(err, "failed to convert to numeric from string", "numstr", bar.L)
+					continue
+				}
+				var o pgtype.Numeric
+				if err := o.Scan(bar.O); err != nil {
+					s.logger.Error(err, "failed to convert to numeric from string", "numstr", bar.O)
+					continue
+				}
+				var c pgtype.Numeric
+				if err := c.Scan(bar.C); err != nil {
+					s.logger.Error(err, "failed to convert to numeric from string", "numstr", bar.C)
+					continue
+				}
+				var ts pgtype.Timestamp
+				if err := ts.Scan(time.Unix(bar.T, 0)); err != nil {
+					s.logger.Error(err, "failed to convert to timestamp from int64", "ts", bar.T)
+					continue
+				}
+				_, err = s.db.CreateBar(ctx, sql.CreateBarParams{
+					H:  h,
+					L:  l,
+					O:  o,
+					C:  c,
+					Ts: ts,
+				})
+				if err != nil {
+					s.logger.Error(err, "failed to persist to db", "bar", bar)
+					continue
+				}
+			}
+		}
+	}()
+}
 
-	return nil
+func (s *Service) isSymbolRegistered(symbols []string) bool {
+	for _, sb := range symbols {
+		if _, ok := s.regSymbols[sb]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+type dispatcher struct {
+	symbols []string
+	strm    *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
+}
+
+func (d dispatcher) dispatch(symbol string, data *tradingchat.OHLCBar) {
+	for _, s := range d.symbols {
+		if s == symbol {
+			d.strm.Send(&apiv1.Candlesticks1MStreamResponse{
+				Update: &apiv1.Candlesticks1MStreamResponse_Bar{
+					High:      data.H,
+					Low:       data.L,
+					Open:      data.O,
+					Close:     data.C,
+					UpdatedAt: timestamppb.New(time.Unix(data.T, 0)),
+				},
+			})
+		}
+	}
 }

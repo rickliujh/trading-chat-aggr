@@ -1,5 +1,8 @@
-CREATE TABLE authors (
+CREATE TABLE OHLC1M (
   id   BIGSERIAL PRIMARY KEY,
-  name text      NOT NULL,
-  bio  text
+  h    NUMERIC(20,5),
+  l    NUMERIC(20,5),
+  o    NUMERIC(20,5),
+  c    NUMERIC(20,5),
+  ts   TIMESTAMP
 );
