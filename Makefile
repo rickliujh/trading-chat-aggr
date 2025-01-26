@@ -6,6 +6,7 @@ DB_URI     	?=
 MGRT_NAME  	?=
 MGRT_DIR   	:= ./sql/migrations/
 MGRT_DIRECTION	?=
+PROJ_BIN_PATH	:= ./bin/
 
 all: help
 
@@ -49,7 +50,7 @@ vulncheck: ## Checks for soource vulnerabilities
 
 .PHONY: server
 server: ## Runs uncpiled version of the server, needs env [DB_URI]
-	go run cmd/server/main.go -dburi $(DB_URI)
+	$(DB_URI) $(ADDR) go run ./cmd/server/...
 
 .PHONY: image
 image: ## Builds the server images
@@ -97,6 +98,11 @@ mgrt-prep: ## Prepare migration files, needs env [MGRT_NAME="init schema"]
 .PHONY: mgrt
 mgrt: ## Migrate schema, needs env [DB_URI="db connect uri"] [MGRT_DIRECTION=up|down]
 	migrate -database $(DB_URI) -path $(MGRT_DIR) $(MGRT_DIRECTION)
+
+.PHONY: build
+build: ## Compile binary by disable CGO and omits DWARF symbol table and debug info
+	@echo Buidling binary to $(PROJ_BIN_PATH)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags="-w -s" -o $(PROJ_BIN_PATH) ./cmd/...
 
 .PHONY: help
 help: ## Display available commands

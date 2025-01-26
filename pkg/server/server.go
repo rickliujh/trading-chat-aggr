@@ -19,8 +19,8 @@ import (
 
 var _ apiv1connect.AggrHandler = (*Service)(nil)
 
-func NewService(logger logr.Logger, db *sql.Queries, done <-chan struct{}) (*Service, error) {
-	symbols := []string{"ETHBTC"}
+func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-chan struct{}) (*Service, error) {
+	logger.Info("registering symbols", "symbols", symbols)
 	stream, err := tradingchat.BinanceStreamEventGen(
 		logger.WithName("binance-stream"),
 		symbols,

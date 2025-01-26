@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -14,29 +13,17 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
-var (
-	address     string
-	name        = "server"
-	environment = "development"
-	dburi       = "postgres://username:password@localhost:5432/database_name"
-
-	// set at build time
-	version = "v0.0.1-default"
-)
-
 func main() {
-	flag.StringVar(&address, "address", ":8080", "Server address (host:port)")
-	flag.StringVar(&name, "name", name, "Server name (default: server)")
-	flag.StringVar(&environment, "environment", environment, "Server environment (default: development)")
-	flag.StringVar(&dburi, "dburi", dburi, "Server pgxdb uri(default: localhost)")
-	flag.Parse()
+	conf, err := loadConfig()
+	if err != nil {
+		panic(err)
+	}
 
-	logger := utils.NewLogger(4)
+	logger := utils.NewLogger(conf.LogLevel)
 
-	// create server
-	logger.Info("creating server...")
+	logger.Info("starting server...")
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dburi)
+	conn, err := pgx.Connect(ctx, conf.DBURI)
 	if err != nil {
 		logger.Error(err, "unable to connect to db")
 		return
@@ -46,7 +33,7 @@ func main() {
 
 	done := make(chan struct{})
 
-	s, err := server.NewService(*logger, queries, done)
+	s, err := server.NewService(*logger, queries, conf.Symbols, done)
 	if err != nil {
 		logger.Error(err, "error while creating server")
 		return
@@ -56,14 +43,14 @@ func main() {
 	path, handler := apiv1connect.NewAggrHandler(s)
 	mux.Handle(path, handler)
 
-	// run server
-	logger.Info("starting server...")
+	logger.Info("running...")
 	server := http.Server{
-		Addr:    address,
+		Addr:    conf.Addr,
 		Handler: h2c.NewHandler(mux, &http2.Server{}),
 	}
 
 	server.RegisterOnShutdown(func() {
+		logger.Info("shutting down server...")
 		close(done)
 	})
 
