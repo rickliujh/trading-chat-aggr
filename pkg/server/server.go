@@ -20,7 +20,7 @@ import (
 
 var _ apiv1connect.AggrHandler = (*Service)(nil)
 
-func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-chan struct{}) (*Service, error) {
+func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-chan struct{}, push, persist bool) (*Service, error) {
 	logger.Info("registering symbols", "symbols", symbols)
 	stream, err := tradingchat.BinanceStreamEventGen(
 		logger.WithName("binance-stream"),
@@ -52,18 +52,25 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 		oncePersist: &sync.Once{},
 	}
 
-	updateStrm1 := make(chan string, 500)
-	updateStrm2 := make(chan string, 500)
-	go func() {
-		defer close(updateStrm1)
-		defer close(updateStrm2)
-		for v := range utils.OrDone(done, updateCh) {
-			updateStrm1 <- v
-			updateStrm2 <- v
-		}
-	}()
-	s.push(done, updateStrm1)
-	s.persist(done, updateStrm2)
+	logger.Info("function enables", "push", push, "persist", persist)
+	if push && persist {
+		updateStrm1 := make(chan string, 500)
+		updateStrm2 := make(chan string, 500)
+		go func() {
+			defer close(updateStrm1)
+			defer close(updateStrm2)
+			for v := range utils.OrDone(done, updateCh) {
+				updateStrm1 <- v
+				updateStrm2 <- v
+			}
+		}()
+		s.push(done, updateStrm1)
+		s.persist(done, updateStrm2)
+	} else if push {
+		s.push(done, updateCh)
+	} else if persist {
+		s.persist(done, updateCh)
+	}
 
 	return s, nil
 }

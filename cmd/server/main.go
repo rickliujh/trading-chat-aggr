@@ -33,7 +33,14 @@ func main() {
 
 	done := make(chan struct{})
 
-	s, err := server.NewService(*logger, queries, conf.Symbols, done)
+	s, err := server.NewService(
+		*logger,
+		queries,
+		conf.Symbols,
+		done,
+		conf.EnablePush,
+		conf.EnablePersist,
+	)
 	if err != nil {
 		logger.Error(err, "error while creating server")
 		return

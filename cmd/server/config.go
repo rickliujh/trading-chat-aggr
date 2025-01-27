@@ -6,10 +6,12 @@ import (
 )
 
 type Config struct {
-	DBURI    string   `mapstructure:"dburi"`
-	Addr     string   `mapstructure:"addr"`
-	Symbols  []string `mapstructure:"symbols"`
-	LogLevel int      `mapstructure:"log_level"`
+	DBURI         string   `mapstructure:"dburi"`
+	Addr          string   `mapstructure:"addr"`
+	Symbols       []string `mapstructure:"symbols"`
+	LogLevel      int      `mapstructure:"log_level"`
+	EnablePush    bool     `mapstructure:"enable_push"`
+	EnablePersist bool     `mapstructure:"enable_persist"`
 }
 
 func setDefault() {
@@ -17,6 +19,8 @@ func setDefault() {
 	viper.SetDefault("DBURI", "postgres://username:password@localhost:5432/database_name")
 	viper.SetDefault("SYMBOLS", "ETHBTC,BNBBTC")
 	viper.SetDefault("LOG_LEVEL", 0)
+	viper.SetDefault("ENABLE_PUSH", true)
+	viper.SetDefault("ENABLE_PERSIST", false)
 }
 
 func loadConfig() (Config, error) {
