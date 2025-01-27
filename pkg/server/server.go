@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -80,6 +81,8 @@ type Service struct {
 	db          *sql.Queries
 	regSymbols  map[string]*struct{}
 	aggr        tradingchat.Aggr
+	// TODO: remove conn when client close it
+	// TODO: track user id
 	notifyList  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
 	rw          *sync.RWMutex
 	oncePush    *sync.Once
@@ -88,31 +91,35 @@ type Service struct {
 
 // Candlesticks1MStream implements apiv1connect.AggrHandler.
 func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) error {
-	req, err := strm.Receive()
-	if err != nil {
-		s.logger.Error(err, "can't read request")
-		return connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-
-	id := req.GetRequestId()
-	symbols := req.GetSymbols()
-	if !s.isSymbolRegistered(symbols) {
-		s.logger.Info("client request unregistered symbols", "symbols", symbols)
-		return connect.NewError(connect.CodeFailedPrecondition, errors.New("some of symbol are not supported"))
-	}
-
-	for _, symbol := range symbols {
-		s.addToList(symbol, strm)
-	}
-
-	s.logger.Info("user registered for OHLC 1m stream updates", "req_id", id, "symbols", symbols)
-
 	for {
 		req, err := strm.Receive()
-		id := req.GetRequestId()
 		if err != nil {
-			s.logger.Error(err, "can't read request")
+			if errors.Is(err, io.EOF) {
+				s.logger.Info("user disconnected", "req", req)
+				return nil
+			}
+			s.logger.Error(err, "error when reading request message")
 		}
+
+		strm.Peer()
+		id := req.GetRequestId()
+		symbols := req.GetSymbols()
+
+		isReqValid := id != "" && len(symbols) != 0
+		if !isReqValid {
+			return connect.NewError(connect.CodeInvalidArgument, errors.New("invalid request id or symbols"))
+		}
+
+		if !s.isSymbolRegistered(symbols) {
+			s.logger.Info("client request unregistered symbols", "symbols", symbols)
+			return connect.NewError(connect.CodeInvalidArgument, errors.New("some of symbols are not supported"))
+		}
+
+		for _, symbol := range symbols {
+			s.addToList(symbol, strm)
+		}
+		s.logger.Info("user registered for OHLC 1m stream updates", "req_id", id, "symbols", symbols)
+
 		s.logger.V(1).Info("request message disregarded because the connection for stream has been established", "req_id", id, "req", req)
 	}
 }
