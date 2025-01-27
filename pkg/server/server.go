@@ -42,12 +42,14 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 	}
 
 	s := &Service{
-		logger:     logger,
-		db:         db,
-		regSymbols: regSymbols,
-		aggr:       aggr,
-		notifyList: map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]{},
-		rw:         &sync.RWMutex{},
+		logger:      logger,
+		db:          db,
+		regSymbols:  regSymbols,
+		aggr:        aggr,
+		notifyList:  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]{},
+		rw:          &sync.RWMutex{},
+		oncePush:    &sync.Once{},
+		oncePersist: &sync.Once{},
 	}
 
 	updateStrm1 := make(chan string, 500)
@@ -67,12 +69,14 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 }
 
 type Service struct {
-	logger     logr.Logger
-	db         *sql.Queries
-	regSymbols map[string]*struct{}
-	aggr       tradingchat.Aggr
-	notifyList map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
-	rw         *sync.RWMutex
+	logger      logr.Logger
+	db          *sql.Queries
+	regSymbols  map[string]*struct{}
+	aggr        tradingchat.Aggr
+	notifyList  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
+	rw          *sync.RWMutex
+	oncePush    *sync.Once
+	oncePersist *sync.Once
 }
 
 // Candlesticks1MStream implements apiv1connect.AggrHandler.
@@ -114,58 +118,62 @@ func (s *Service) addToList(symbol string, to *connect.BidiStream[apiv1.Candlest
 	s.rw.Unlock()
 }
 func (s *Service) push(done <-chan struct{}, updateStream <-chan string) {
-	go func() {
-		for symbol := range utils.OrDone(done, updateStream) {
-			s.logger.V(4).Info("new update to push", symbol)
-			s.rw.RLock()
-			sublist := s.notifyList[symbol]
-			s.rw.RUnlock()
+	s.oncePersist.Do(func() {
+		go func() {
+			for symbol := range utils.OrDone(done, updateStream) {
+				s.logger.V(4).Info("new update to push", symbol)
+				s.rw.RLock()
+				sublist := s.notifyList[symbol]
+				s.rw.RUnlock()
 
-			bar, err := s.aggr.OHLCBar(symbol)
-			if err != nil {
-				s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
-			}
+				bar, err := s.aggr.OHLCBar(symbol)
+				if err != nil {
+					s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
+				}
 
-			for _, to := range sublist {
-				to.Send(&apiv1.Candlesticks1MStreamResponse{
-					Update: &apiv1.Candlesticks1MStreamResponse_Bar{
-						High:      bar.H,
-						Low:       bar.L,
-						Open:      bar.O,
-						Close:     bar.C,
-						UpdatedAt: timestamppb.New(time.Unix(bar.T, 0)),
-					},
-				})
+				for _, to := range sublist {
+					to.Send(&apiv1.Candlesticks1MStreamResponse{
+						Update: &apiv1.Candlesticks1MStreamResponse_Bar{
+							High:      bar.H,
+							Low:       bar.L,
+							Open:      bar.O,
+							Close:     bar.C,
+							UpdatedAt: timestamppb.New(time.Unix(bar.T, 0)),
+						},
+					})
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (s *Service) persist(done <-chan struct{}, updateStream <-chan string) {
-	go func() {
-		for symbol := range utils.OrDone(done, updateStream) {
-			s.logger.V(4).Info("new update to persist", symbol)
+	s.oncePersist.Do(func() {
+		go func() {
+			for symbol := range utils.OrDone(done, updateStream) {
+				s.logger.V(4).Info("new update to persist", symbol)
 
-			bar, err := s.aggr.OHLCBar(symbol)
-			if err != nil {
-				s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
-			}
+				bar, err := s.aggr.OHLCBar(symbol)
+				if err != nil {
+					s.logger.Error(err, "registered symbol not exist in aggr stream", "symbol", symbol)
+				}
 
-			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
-			defer cancel()
+				ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
+				defer cancel()
 
-			bar4db, err := toDBBar(bar)
-			if err != nil {
-				s.logger.Error(err, "failed to conver OHLCBar to db model", "bar", bar)
-				continue
+				bar4db, err := toDBBar(bar)
+				if err != nil {
+					s.logger.Error(err, "failed to conver OHLCBar to db model", "bar", bar)
+					continue
+				}
+				_, err = s.db.CreateBar(ctx, bar4db)
+				if err != nil {
+					s.logger.Error(err, "failed to persist to db", "bar", bar)
+					continue
+				}
 			}
-			_, err = s.db.CreateBar(ctx, bar4db)
-			if err != nil {
-				s.logger.Error(err, "failed to persist to db", "bar", bar)
-				continue
-			}
-		}
-	}()
+		}()
+	})
 }
 
 func (s *Service) isSymbolRegistered(symbols []string) bool {
