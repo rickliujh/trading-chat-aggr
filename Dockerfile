@@ -6,7 +6,7 @@ WORKDIR /goapp
 
 RUN make build
 
-from scratch
+FROM scratch
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /goapp/bin/server /
