@@ -77,10 +77,10 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 }
 
 type Service struct {
-	logger      logr.Logger
-	db          *sql.Queries
-	regSymbols  map[string]*struct{}
-	aggr        tradingchat.Aggr
+	logger     logr.Logger
+	db         *sql.Queries
+	regSymbols map[string]*struct{}
+	aggr       tradingchat.Aggr
 	// TODO: remove conn when client close it
 	// TODO: track user id
 	notifyList  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
@@ -91,19 +91,23 @@ type Service struct {
 
 // Candlesticks1MStream implements apiv1connect.AggrHandler.
 func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) error {
+	var id string
+	var symbols []string
+
 	for {
 		req, err := strm.Receive()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				s.logger.Info("user disconnected", "req", req)
+				s.logger.Info("user disconnected", "req_id", id, "symbols", symbols)
+				s.removeFromList(symbols, strm)
 				return nil
 			}
 			s.logger.Error(err, "error when reading request message")
 		}
 
 		strm.Peer()
-		id := req.GetRequestId()
-		symbols := req.GetSymbols()
+		id = req.GetRequestId()
+		symbols = req.GetSymbols()
 
 		isReqValid := id != "" && len(symbols) != 0
 		if !isReqValid {
@@ -115,21 +119,43 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 			return connect.NewError(connect.CodeInvalidArgument, errors.New("some of symbols are not supported"))
 		}
 
-		for _, symbol := range symbols {
-			s.addToList(symbol, strm)
-		}
+		s.addToList(symbols, strm)
+
 		s.logger.Info("user registered for OHLC 1m stream updates", "req_id", id, "symbols", symbols)
 
 		s.logger.V(1).Info("request message disregarded because the connection for stream has been established", "req_id", id, "req", req)
 	}
 }
 
-func (s *Service) addToList(symbol string, to *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
-	s.rw.Lock()
-	sublist, _ := s.notifyList[symbol]
-	sublist = append(sublist, to)
-	s.notifyList[symbol] = sublist
-	s.rw.Unlock()
+// removeFromList removes elements to be deleted by swapping it with last element (order don't matter)
+// and slices arr with (length of arr before swap - number of element that removes)
+// to achieve most efficiency of deletion
+func (s *Service) removeFromList(symbols []string, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
+	for _, symbol := range symbols {
+		s.rw.Lock()
+		sublist, _ := s.notifyList[symbol]
+
+		// next swap location pointer
+		count := len(sublist) - 1
+		for i, to := range sublist {
+			if to == strm {
+				sublist[i] = sublist[count]
+				count--
+			}
+		}
+		s.notifyList[symbol] = sublist[:count+1]
+		s.rw.Unlock()
+	}
+}
+
+func (s *Service) addToList(symbols []string, to *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
+	for _, symbol := range symbols {
+		s.rw.Lock()
+		sublist, _ := s.notifyList[symbol]
+		sublist = append(sublist, to)
+		s.notifyList[symbol] = sublist
+		s.rw.Unlock()
+	}
 }
 func (s *Service) push(done <-chan struct{}, updateStream <-chan string) {
 	s.oncePersist.Do(func() {
