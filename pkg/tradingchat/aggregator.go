@@ -6,6 +6,7 @@ import (
 
 	bconn "github.com/binance/binance-connector-go"
 	"github.com/go-logr/logr"
+	"github.com/rickliujh/trading-chat-aggr/pkg/utils"
 )
 
 var (
@@ -24,7 +25,7 @@ func NewAggrStream(logger logr.Logger, done <-chan struct{}, eventStream <-chan 
 
 	go func() {
 		defer close(updateCh)
-		for e := range OrDone(done, eventStream) {
+		for e := range utils.OrDone(done, eventStream) {
 			logger.V(4).Info("aggregator received new event", "event", e)
 
 			calc, ok := dict[e.Symbol]
@@ -41,7 +42,7 @@ func NewAggrStream(logger logr.Logger, done <-chan struct{}, eventStream <-chan 
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for tick := range OrDone(done, ticker.C) {
+		for tick := range utils.OrDone(done, ticker.C) {
 			for _, calc := range dict {
 				calc.tick(tick.Unix())
 			}
@@ -59,23 +60,3 @@ func (ag Aggr) OHLCBar(symbol string) (OHLCBar, error) {
 	return calc.Bar(), nil
 }
 
-func OrDone[T any](done <-chan struct{}, stream <-chan T) <-chan T {
-	relayStream := make(chan T)
-	go func() {
-		defer close(relayStream)
-		for {
-			select {
-			case <-done:
-				return
-			case data := <-stream:
-				select {
-				case <-done:
-					return
-				default:
-					relayStream <- data
-				}
-			}
-		}
-	}()
-	return relayStream
-}
