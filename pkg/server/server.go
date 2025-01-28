@@ -77,12 +77,10 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 }
 
 type Service struct {
-	logger     logr.Logger
-	db         *sql.Queries
-	regSymbols map[string]*struct{}
-	aggr       tradingchat.Aggr
-	// TODO: remove conn when client close it
-	// TODO: track user id
+	logger      logr.Logger
+	db          *sql.Queries
+	regSymbols  map[string]*struct{}
+	aggr        tradingchat.Aggr
 	notifyList  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
 	rw          *sync.RWMutex
 	oncePush    *sync.Once
@@ -93,37 +91,54 @@ type Service struct {
 func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) error {
 	var id string
 	var symbols []string
-
+	defer func() {
+		s.logger.V(2).Info("removing subscriber", "req_id", id, "symbols", symbols)
+		s.removeFromList(symbols, strm)
+		s.logger.V(2).Info("client disconnected", "req_id", id, "symbols", symbols)
+	}()
 	for {
 		req, err := strm.Receive()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				s.logger.Info("user disconnected", "req_id", id, "symbols", symbols)
-				s.removeFromList(symbols, strm)
 				return nil
 			}
 			s.logger.Error(err, "error when reading request message")
 		}
 
-		strm.Peer()
-		id = req.GetRequestId()
-		symbols = req.GetSymbols()
+		reqID := req.GetRequestId()
+		reqSbs := req.GetSymbols()
 
-		isReqValid := id != "" && len(symbols) != 0
+		// validation
+		isReqValid := reqID != "" && len(reqSbs) != 0 && (reqID == id || id == "")
 		if !isReqValid {
+			s.logger.Info("found invalid request disconnecting with client", "req_id", id, "req_id_new", reqID)
 			return connect.NewError(connect.CodeInvalidArgument, errors.New("invalid request id or symbols"))
 		}
-
 		if !s.isSymbolRegistered(symbols) {
 			s.logger.Info("client request unregistered symbols", "symbols", symbols)
 			return connect.NewError(connect.CodeInvalidArgument, errors.New("some of symbols are not supported"))
 		}
 
-		s.addToList(symbols, strm)
+		// track request id and subscribed symbols
+		id = reqID
+		var toBeAdd []string
+		for _, sNew := range reqSbs {
+			exist := false
+			for _, sOld := range symbols {
+				if sNew == sOld {
+					exist = true
+					break
+				}
+			}
+			if !exist {
+				toBeAdd = append(toBeAdd, sNew)
+			}
+		}
+		symbols = append(symbols, toBeAdd...)
 
-		s.logger.Info("user registered for OHLC 1m stream updates", "req_id", id, "symbols", symbols)
-
-		s.logger.V(1).Info("request message disregarded because the connection for stream has been established", "req_id", id, "req", req)
+		s.addToList(toBeAdd, strm)
+		s.logger.Info("user registered for OHLC 1m stream updates", "req_id", id, "symbols", symbols, "symbols-added", toBeAdd)
 	}
 }
 
@@ -138,6 +153,7 @@ func (s *Service) removeFromList(symbols []string, strm *connect.BidiStream[apiv
 		// next swap location pointer
 		count := len(sublist) - 1
 		for i, to := range sublist {
+			// compare the address of the stream
 			if to == strm {
 				sublist[i] = sublist[count]
 				count--
