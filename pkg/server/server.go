@@ -19,7 +19,13 @@ import (
 	"github.com/rickliujh/trading-chat-aggr/pkg/utils"
 )
 
-var _ apiv1connect.AggrHandler = (*Service)(nil)
+var (
+	_ apiv1connect.AggrHandler = (*Service)(nil)
+
+	ErrNotRevieved         = errors.New("unable to receive")
+	ErrInvalidRequest      = errors.New("invalid request id or symbols")
+	ErrSymbolsNotSupported = errors.New("some of symbols are not supported")
+)
 
 func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-chan struct{}, push, persist bool) (*Service, error) {
 	logger.Info("registering symbols", "symbols", symbols)
@@ -37,9 +43,9 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 
 	aggr, updateCh := tradingchat.NewAggrStream(logger.WithName("aggr"), done, stream, symbols)
 
-	regSymbols := make(map[string]*struct{}, len(symbols))
+	regSymbols := make(map[string]bool, len(symbols))
 	for _, s := range symbols {
-		regSymbols[s] = nil
+		regSymbols[s] = true
 	}
 
 	s := &Service{
@@ -79,7 +85,7 @@ func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-ch
 type Service struct {
 	logger      logr.Logger
 	db          *sql.Queries
-	regSymbols  map[string]*struct{}
+	regSymbols  map[string]bool
 	aggr        tradingchat.Aggr
 	notifyList  map[string][]*connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]
 	rw          *sync.RWMutex
@@ -104,6 +110,7 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 				return nil
 			}
 			s.logger.Error(err, "error when reading request message")
+			return connect.NewError(connect.CodeUnknown, ErrNotRevieved)
 		}
 
 		reqID := req.GetRequestId()
@@ -113,11 +120,11 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 		isReqValid := reqID != "" && len(reqSbs) != 0 && (reqID == id || id == "")
 		if !isReqValid {
 			s.logger.Info("found invalid request disconnecting with client", "req_id", id, "req_id_new", reqID)
-			return connect.NewError(connect.CodeInvalidArgument, errors.New("invalid request id or symbols"))
+			return connect.NewError(connect.CodeInvalidArgument, ErrInvalidRequest)
 		}
-		if !s.isSymbolRegistered(symbols) {
-			s.logger.Info("client request unregistered symbols", "symbols", symbols)
-			return connect.NewError(connect.CodeInvalidArgument, errors.New("some of symbols are not supported"))
+		if !s.isSymbolRegistered(reqSbs) {
+			s.logger.Info("client request unregistered symbols", "symbols", reqSbs)
+			return connect.NewError(connect.CodeInvalidArgument, ErrSymbolsNotSupported)
 		}
 
 		// track request id and subscribed symbols
@@ -146,8 +153,8 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 // and slices arr with (length of arr before swap - number of element that removes)
 // to achieve most efficiency of deletion
 func (s *Service) removeFromList(symbols []string, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
+	s.rw.Lock()
 	for _, symbol := range symbols {
-		s.rw.Lock()
 		sublist, _ := s.notifyList[symbol]
 
 		// next swap location pointer
@@ -160,18 +167,18 @@ func (s *Service) removeFromList(symbols []string, strm *connect.BidiStream[apiv
 			}
 		}
 		s.notifyList[symbol] = sublist[:count+1]
-		s.rw.Unlock()
 	}
+	s.rw.Unlock()
 }
 
 func (s *Service) addToList(symbols []string, to *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
+	s.rw.Lock()
 	for _, symbol := range symbols {
-		s.rw.Lock()
 		sublist, _ := s.notifyList[symbol]
 		sublist = append(sublist, to)
 		s.notifyList[symbol] = sublist
-		s.rw.Unlock()
 	}
+	s.rw.Unlock()
 }
 func (s *Service) push(done <-chan struct{}, updateStream <-chan string) {
 	s.oncePersist.Do(func() {
