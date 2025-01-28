@@ -22,9 +22,9 @@ import (
 var (
 	_ apiv1connect.AggrHandler = (*Service)(nil)
 
-	ErrNotRevieved         = errors.New("unable to receive")
-	ErrInvalidRequest      = errors.New("invalid request id or symbols")
-	ErrSymbolsNotSupported = errors.New("some of symbols are not supported")
+	ErrNotRevieved         = connect.NewError(connect.CodeUnknown, errors.New("unable to receive"))
+	ErrInvalidRequest      = connect.NewError(connect.CodeInvalidArgument, errors.New("invalid request id or symbols"))
+	ErrSymbolsNotSupported = connect.NewError(connect.CodeInvalidArgument, errors.New("some of symbols are not supported"))
 )
 
 func NewService(logger logr.Logger, db *sql.Queries, symbols []string, done <-chan struct{}, push, persist bool) (*Service, error) {
@@ -110,7 +110,7 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 				return nil
 			}
 			s.logger.Error(err, "error when reading request message")
-			return connect.NewError(connect.CodeUnknown, ErrNotRevieved)
+			return ErrNotRevieved
 		}
 
 		reqID := req.GetRequestId()
@@ -120,11 +120,11 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 		isReqValid := reqID != "" && len(reqSbs) != 0 && (reqID == id || id == "")
 		if !isReqValid {
 			s.logger.Info("found invalid request disconnecting with client", "req_id", id, "req_id_new", reqID)
-			return connect.NewError(connect.CodeInvalidArgument, ErrInvalidRequest)
+			return ErrInvalidRequest
 		}
 		if !s.isSymbolRegistered(reqSbs) {
 			s.logger.Info("client request unregistered symbols", "symbols", reqSbs)
-			return connect.NewError(connect.CodeInvalidArgument, ErrSymbolsNotSupported)
+			return ErrSymbolsNotSupported
 		}
 
 		// track request id and subscribed symbols
@@ -150,7 +150,7 @@ func (s *Service) Candlesticks1MStream(ctx context.Context, strm *connect.BidiSt
 }
 
 // removeFromList removes elements to be deleted by swapping it with last element (order don't matter)
-// and slices arr with (length of arr before swap - number of element that removes)
+// and slices arr with (length of arr before swapping - number of elements that removed)
 // to achieve most efficiency of deletion
 func (s *Service) removeFromList(symbols []string, strm *connect.BidiStream[apiv1.Candlesticks1MStreamRequest, apiv1.Candlesticks1MStreamResponse]) {
 	s.rw.Lock()
@@ -181,13 +181,12 @@ func (s *Service) addToList(symbols []string, to *connect.BidiStream[apiv1.Candl
 	s.rw.Unlock()
 }
 func (s *Service) push(done <-chan struct{}, updateStream <-chan string) {
-	s.oncePersist.Do(func() {
+	s.oncePush.Do(func() {
 		go func() {
 			for symbol := range utils.OrDone(done, updateStream) {
 				s.logger.V(4).Info("new update to push", symbol)
 				s.rw.RLock()
 				sublist := s.notifyList[symbol]
-				s.rw.RUnlock()
 
 				bar, err := s.aggr.OHLCBar(symbol)
 				if err != nil {
@@ -205,6 +204,7 @@ func (s *Service) push(done <-chan struct{}, updateStream <-chan string) {
 						},
 					})
 				}
+				s.rw.RUnlock()
 			}
 		}()
 	})
